@@ -32,8 +32,7 @@
 #define ADC_MAX         4095
 
 // ── WiFi AP ───────────────────────────────────────────────────────────────────
-#define WIFI_SSID   "StrobeDisplay"
-#define WIFI_PASS   ""            // open AP — set a password if desired
+#include "credentials.h"          // defines WIFI_SSID and WIFI_PASS (gitignored)
 #define WIFI_IP     "192.168.4.1"
 
 // ── Misc ──────────────────────────────────────────────────────────────────────
