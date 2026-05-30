@@ -3,7 +3,7 @@
 ## Schematic Overview
 
 ```
-12V PSU → [Buck 12V→5V] → ESP32 VIN
+12V PSU → [LM317 12V→5.17V linear reg] → ESP32 VIN
        ↘ Q1 MOSFET → Electromagnet
        ↘ Q2 MOSFET → LED strobe
 ```
@@ -104,10 +104,15 @@ R = (12V - 3.3V) / 0.35A = 24.9Ω → use 22Ω 1W
 |--------------------|---------|------------------------|--------|
 | Electromagnet      | 12V     | ~250 mA average        | ~3W    |
 | LED (10W module)   | 12V     | ~38 mA avg (4.5% duty) | ~0.5W  |
-| ESP32 + LDO losses | 5V      | 240 mA                 | 1.2W   |
-| Total              | 12V     | ~0.7A                  | ~4.7W  |
+| ESP32 via LM317    | 12V     | ~150 mA                | ~1.8W (incl. ~1W LM317 heat) |
+| Total              | 12V     | ~0.45A                 | ~5.3W  |
 
-A 12V **1A** supply is sufficient. A 2A supply gives comfortable headroom.
+Note the LM317 is a **linear** regulator: it draws the same current on its 12V input as
+the ESP32 pulls on the 5V side, burning the 12V−5.17V difference as heat (~1W at idle,
+briefly more on WiFi transmit). A buck would have drawn ~half the 12V-side current — this
+is the efficiency cost of the linear stage. It does not need a heatsink at this load.
+
+A 12V **1A** supply is sufficient; the **6A** supply on hand is ample headroom.
 The EM's **peak** current can hit 1–2A for the first few milliseconds on each cycle
 (before the inductance limits it). The 12V supply needs to handle this — most wall
 adapters can handle 2× rated current for brief spikes.
@@ -129,12 +134,14 @@ float and feed noise into the drive if left unpopulated while still being read.
 | 1   | 1N4001 rectifier diode        | $0.10 ea    | Flyback on EM coil             |
 | 2   | 100Ω resistor ¼W              | <$0.05 ea   | Gate series                    |
 | 2   | 10kΩ resistor ¼W              | <$0.05 ea   | Gate pull-downs                |
+| 1   | LM317 regulator (TO-220)      | $0.30       | 12V→5.17V linear reg for ESP32 |
+| 1   | 150Ω resistor ¼W              | <$0.05      | LM317 R1 (OUT→ADJ)             |
+| 1   | 470Ω resistor ¼W              | <$0.05      | LM317 R2 (ADJ→GND)             |
 | 2   | 470µF 50V electrolytic        | $0.30 ea    | 12V rail bulk decoupling       |
-| 3   | 100nF ceramic cap             | $0.10 ea    | HF decoupling (Q1, Q2, VIN)    |
-| 1   | 10µF electrolytic             | $0.15 ea    | ESP32 VIN decoupling           |
+| 4   | 100nF ceramic cap             | $0.10 ea    | HF decoupling (Q1, Q2, LM317 in+out) |
+| 1   | 10µF electrolytic             | $0.15 ea    | LM317 output / ESP32 VIN       |
 | 1   | 12V 10W COB LED module        | $3–5        | Strobe light source            |
-| 1   | MP1584 buck module (12V→5V)   | $1–2        | Powers ESP32                   |
-| 1   | 12V 2A power supply           | $5–10       | Wall adapter                   |
+| 1   | 12V 6A power supply           | $5–10       | Wall adapter (6A on hand; 1–2A is plenty) |
 | 1   | Breadboard or perfboard       | $2          | Assembly                       |
 | —   | Wire, headers                 | ~$2         |                                |
 
