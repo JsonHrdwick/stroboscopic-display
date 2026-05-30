@@ -23,6 +23,12 @@ Side view:
 The resonant frequency of the system depends on the reed material, length, cross-section,
 and tip mass (feather weight).
 
+**Target ~80 Hz.** The reed resonance sets the whole system's operating frequency, and that
+frequency must sit above the ~60 Hz flicker-fusion threshold so the strobe reads as
+continuous light (see hardware-design.md). Jeff Lieberman's *Slow Dance* runs at ~80 Hz for
+exactly this reason. Tune the reed to land in the **75–90 Hz** band — which means a shorter,
+stiffer free length than a slow strobe would use.
+
 ### Recommended Reed Materials
 
 | Material              | f₀ guidance (150mm, no tip mass) | Notes                      |
@@ -53,12 +59,17 @@ For steel: E = 200 GPa, ρ = 7850 kg/m³ → √(E/ρ) ≈ 5048 m/s
 f₀ ≈ 818 × (h / L²)    [h and L in meters]
 ```
 
-Example — hacksaw blade:
+Example — hacksaw blade tuned to the ~80 Hz target:
 - h = 0.7 mm = 0.0007 m (thickness)
-- L = 120 mm = 0.12 m (free length from clamp to EM contact point)
-- f₀ ≈ 818 × (0.0007 / 0.0144) ≈ **39.8 Hz**
+- L = 85 mm = 0.085 m (free length from clamp to EM contact point)
+- f₀ ≈ 818 × (0.0007 / 0.007225) ≈ **79.3 Hz**
 
-Shorter free length → higher frequency. Longer → lower.
+Shorter free length → higher frequency. Longer → lower. (A 120 mm free length on the
+same blade drops to ~40 Hz — which would visibly flicker, so keep it short.)
+
+Note the trade-off: a stiffer, shorter reed needs **more drive force** for the same tip
+amplitude. The resonance Q buys most of that back (amplitude ≈ static deflection × Q), but
+it makes electromagnet coupling and air gap more critical at 80 Hz than at 40 Hz.
 
 **Practical tuning:** slide the clamp along the blade. Each cm of free length changes the
 frequency by several Hz. Find the resonance by slowly sweeping the EM drive frequency until
@@ -98,11 +109,38 @@ Top view (EM placement options):
 **Option A is better for demonstrations** — maximum visible tip amplitude, even though it
 requires more magnetic force (longer lever arm means the EM needs to pull harder).
 
-Place the EM so its face is 1–3 mm below the reed tip at rest. Too close and the tip
-gets stuck at maximum pull (snap-through). Too far and not enough force.
+Place the EM so its face is **~1 mm** below the reed tip at rest — as close as you can get
+without the tip snapping into contact at full pull ("snap-through"). The air gap is the
+single biggest lever on force: **magnetic force falls off roughly as 1/gap²**, so going from
+3 mm to 1 mm can multiply the effective pull several-fold. At the 80 Hz target the reed is
+stiff, so you need every bit of that force — start tight.
 
-If the reed tip is not ferromagnetic: glue a small steel washer or disk (~5mm diameter,
-1mm thick) to the underside of the reed tip to give the EM something to attract.
+### Magnet coupling and force (critical at 80 Hz)
+
+The force that matters here is **not** the magnet's rated "holding force" (measured at zero
+gap, flush against a steel plate) — it's the force across your actual ~1 mm working gap with
+the reed's small steel target. That can be a small fraction of the holding rating. To
+maximize it:
+
+- **Use a concentrated iron pole**, not a flat magnet face — a solenoid/coil with a
+  protruding iron core focuses flux onto a small spot and pulls far better across a gap than
+  a broad flat face. This is closer to how *Slow Dance* drives its reed.
+- **Minimize the gap** (see above) and keep it consistent.
+- **Drive in-phase**: pull while the reed is moving toward the magnet (firmware phase
+  control) so each pulse adds kinetic energy — most effective near resonance.
+
+If the reed tip is not ferromagnetic: glue a small **soft-steel** washer or disk (~6–8 mm
+diameter, ~1 mm thick) to the underside of the reed tip to give the EM a good flux target.
+Keep it light — added tip mass lowers f₀ (see Tip Mass Effect) and pulls you off 80 Hz.
+
+### Damping is the enemy (subject choice affects force needed)
+
+At resonance, achievable amplitude is set by how much energy damping removes each cycle.
+A draggy subject (a fluffy feather, a wide ribbon) adds significant **air damping**, lowers
+the system Q, and demands more drive force for visible motion. If the magnet struggles,
+try a lower-drag subject (thin mylar strip, fine thread) before assuming you need a bigger
+magnet — and only upgrade the magnet if the reed still won't move at minimum gap, on exact
+resonance, with a low-drag subject.
 
 ## Mounting / Frame
 

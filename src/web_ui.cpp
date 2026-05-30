@@ -2,13 +2,10 @@
 #include "config.h"
 #include "drive.h"
 #include <WiFi.h>
-#include <AsyncTCP.h>
-#include <ESPAsyncWebServer.h>
+#include <WebServer.h>
 #include <ArduinoJson.h>
 
-static AsyncWebServer server(80);
-static unsigned long  s_last_web_cmd_ms = 0;
-static const unsigned long WEB_OVERRIDE_TTL_MS = 10000;
+static WebServer server(80);
 
 // ── HTML page (served from flash) ─────────────────────────────────────────────
 static const char INDEX_HTML[] PROGMEM = R"rawhtml(
@@ -45,8 +42,8 @@ static const char INDEX_HTML[] PROGMEM = R"rawhtml(
 <div class="card">
   <div class="row">
     <label>Frequency</label>
-    <input type="range" id="freq" min="5" max="120" step="0.5" value="30">
-    <span class="val" id="freq_v">30.0 Hz</span>
+    <input type="range" id="freq" min="60" max="120" step="0.5" value="80">
+    <span class="val" id="freq_v">80.0 Hz</span>
   </div>
   <div class="row">
     <label>Phase</label>
@@ -57,6 +54,11 @@ static const char INDEX_HTML[] PROGMEM = R"rawhtml(
     <label>Flash width</label>
     <input type="range" id="pulse" min="5" max="50" step="1" value="15">
     <span class="val" id="pulse_v">1500 µs</span>
+  </div>
+  <div class="row">
+    <label>EM duty</label>
+    <input type="range" id="duty" min="5" max="90" step="5" value="50">
+    <span class="val" id="duty_v">50 %</span>
   </div>
   <div class="row delta-row" id="delta_row">
     <label>Drift speed</label>
@@ -91,6 +93,7 @@ function fmt(id, val, suffix) {
 $('freq').oninput  = () => { fmt('freq_v',  parseFloat($('freq').value).toFixed(1), ' Hz'); send(); };
 $('phase').oninput = () => { fmt('phase_v', $('phase').value, '°'); send(); };
 $('pulse').oninput = () => { fmt('pulse_v', $('pulse').value * 100, ' µs'); send(); };
+$('duty').oninput  = () => { fmt('duty_v',  $('duty').value, ' %'); send(); };
 $('delta').oninput = () => { fmt('delta_v', parseFloat($('delta').value).toFixed(2), ' Hz'); send(); };
 
 function setMode(m) {
@@ -112,6 +115,7 @@ function send() {
       freq:  parseFloat($('freq').value),
       phase: parseInt($('phase').value),
       pulse: parseInt($('pulse').value),
+      duty:  parseInt($('duty').value),
       delta: parseFloat($('delta').value),
       mode:  mode
     })
@@ -129,9 +133,11 @@ async function poll() {
       $('freq').value  = d.freq;
       $('phase').value = d.phase;
       $('pulse').value = d.pulse;
+      $('duty').value  = d.duty;
       fmt('freq_v',  d.freq.toFixed(1), ' Hz');
       fmt('phase_v', d.phase.toFixed(0), '°');
       fmt('pulse_v', d.pulse * 100, ' µs');
+      fmt('duty_v',  d.duty, ' %');
       setMode(d.mode);
       poll.synced = true;
     }
@@ -166,51 +172,51 @@ static DriveMode str_to_mode(const char* s) {
     return DriveMode::SYNC;
 }
 
+// ── Route handlers ────────────────────────────────────────────────────────────
+static void handle_root() {
+    server.send_P(200, "text/html", INDEX_HTML);
+}
+
+static void handle_status() {
+    char buf[160];
+    snprintf(buf, sizeof(buf),
+        "{\"freq\":%.2f,\"phase\":%.1f,\"pulse\":%d,\"duty\":%d,\"mode\":\"%s\"}",
+        drive_get_freq(), drive_get_phase(),
+        (int)drive_get_led_pulse(), (int)drive_get_em_duty(),
+        mode_to_str(drive_get_mode()));
+    server.send(200, "application/json", buf);
+}
+
+// POST /api/set  body: {"freq":80,"phase":90,"pulse":15,"duty":50,"delta":0.5,"mode":"sync"}
+static void handle_set() {
+    if (!server.hasArg("plain")) { server.send(400); return; }
+    JsonDocument doc;
+    if (deserializeJson(doc, server.arg("plain"))) { server.send(400); return; }
+
+    if (doc["freq"].is<float>())       drive_set_freq(doc["freq"].as<float>());
+    if (doc["phase"].is<float>())      drive_set_phase(doc["phase"].as<float>());
+    if (doc["pulse"].is<int>())        drive_set_led_pulse(doc["pulse"].as<int>());
+    if (doc["duty"].is<int>())         drive_set_em_duty(doc["duty"].as<int>());
+    if (doc["delta"].is<float>())      drive_set_slow_mo_delta(doc["delta"].as<float>());
+    if (doc["mode"].is<const char*>()) drive_set_mode(str_to_mode(doc["mode"].as<const char*>()));
+
+    server.send(200, "application/json", "{\"ok\":true}");
+}
+
 // ── Public ────────────────────────────────────────────────────────────────────
 void web_ui_init() {
     WiFi.mode(WIFI_AP);
+    WiFi.softAPConfig(IPAddress(192,168,4,1), IPAddress(192,168,4,1), IPAddress(255,255,255,0));
     WiFi.softAP(WIFI_SSID, strlen(WIFI_PASS) ? WIFI_PASS : nullptr);
+    delay(500);
     Serial.printf("[wifi] AP: %s  IP: %s\n", WIFI_SSID, WiFi.softAPIP().toString().c_str());
 
-    server.on("/", HTTP_GET, [](AsyncWebServerRequest* req) {
-        req->send_P(200, "text/html", INDEX_HTML);
-    });
-
-    server.on("/api/status", HTTP_GET, [](AsyncWebServerRequest* req) {
-        char buf[128];
-        snprintf(buf, sizeof(buf),
-            "{\"freq\":%.2f,\"phase\":%.1f,\"pulse\":%d,\"mode\":\"%s\"}",
-            drive_get_freq(), drive_get_phase(),
-            (int)drive_get_led_pulse(), mode_to_str(drive_get_mode()));
-        req->send(200, "application/json", buf);
-    });
-
-    // POST /api/set  body: {"freq":30,"phase":90,"pulse":15,"delta":0.5,"mode":"sync"}
-    AsyncCallbackJsonWebHandler* set_handler =
-        new AsyncCallbackJsonWebHandler("/api/set",
-            [](AsyncWebServerRequest* req, JsonVariant& json) {
-                if (!json.is<JsonObject>()) { req->send(400); return; }
-                JsonObject obj = json.as<JsonObject>();
-
-                if (obj["freq"].is<float>())  drive_set_freq(obj["freq"].as<float>());
-                if (obj["phase"].is<float>()) drive_set_phase(obj["phase"].as<float>());
-                if (obj["pulse"].is<int>())   drive_set_led_pulse(obj["pulse"].as<int>());
-                if (obj["delta"].is<float>()) drive_set_slow_mo_delta(obj["delta"].as<float>());
-                if (obj["mode"].is<const char*>())
-                    drive_set_mode(str_to_mode(obj["mode"].as<const char*>()));
-
-                s_last_web_cmd_ms = millis();
-                req->send(200, "application/json", "{\"ok\":true}");
-            });
-    server.addHandler(set_handler);
-
+    server.on("/",           HTTP_GET,  handle_root);
+    server.on("/api/status", HTTP_GET,  handle_status);
+    server.on("/api/set",    HTTP_POST, handle_set);
     server.begin();
 }
 
 void web_ui_poll() {
-    // Nothing needed — AsyncWebServer runs on its own tasks.
-}
-
-bool web_ui_has_override() {
-    return (millis() - s_last_web_cmd_ms) < WEB_OVERRIDE_TTL_MS;
+    server.handleClient();
 }

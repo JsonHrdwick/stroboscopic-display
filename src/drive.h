@@ -17,12 +17,14 @@ void drive_set_freq(float hz);                // EM drive frequency
 void drive_set_phase(float deg);              // strobe phase offset (0–360)
 void drive_set_led_pulse(uint8_t ticks);      // flash duration in 100 µs ticks
 void drive_set_slow_mo_delta(float hz);       // strobe lag below drive freq
+void drive_set_em_duty(uint8_t pct);          // EM on-time per cycle (EM_DUTY_MIN..MAX %)
 void drive_set_mode(DriveMode mode);
 
 // ── Getters ───────────────────────────────────────────────────────────────────
 float      drive_get_freq();
 float      drive_get_phase();
 uint8_t    drive_get_led_pulse();
+uint8_t    drive_get_em_duty();
 DriveMode  drive_get_mode();
 
 // ── Sweep tick (call from main loop while in SWEEP mode) ─────────────────────

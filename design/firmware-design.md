@@ -9,8 +9,8 @@ This is much simpler than the rotary version. No interrupts for sensing, no PID.
 Just two output signals from the same clock source.
 
 ```
-ADC (pot 1) → drive_freq_hz
-ADC (pot 2) → phase_deg
+Web UI (WiFi AP + HTTP)  ┐
+Serial single-char cmds  ┴→ drive_freq_hz, phase_deg, mode
 
 LEDC timer → EM drive square wave at drive_freq_hz
              50% duty (on for half period, off for half)
@@ -20,6 +20,19 @@ Hardware Timer ISR → fires at drive_freq_hz
       └── led_on_cb → GPIO_LED HIGH
           └── (led_pulse_us later) → GPIO_LED LOW
 ```
+
+Control is via the **web UI** and a **serial command** fallback — there are no
+potentiometers (GPIO34/35 are unused). See system-design.md for the GPIO map.
+
+### Operating frequency: stay above flicker fusion
+
+The strobe fires **once per vibration cycle**, so the LED flash rate equals `drive_freq_hz`.
+The operating band is **60–120 Hz (default 80 Hz)** so the flash rate stays above the ~60 Hz
+flicker-fusion threshold and the light reads as *continuous* — the "always on" look of
+Jeff Lieberman's *Slow Dance*. The slow-motion illusion comes from the small **offset**
+between the strobe and the drive (`SLOW_MO_DELTA_DEFAULT_HZ`), e.g. 80.0 Hz drive vs
+79.5 Hz strobe → 0.5 Hz beat, not from a low absolute frequency. Never run below ~60 Hz or
+the magic collapses into a visible blink.
 
 ## File Structure
 
@@ -31,7 +44,7 @@ src/
 ├── em_drive.h
 ├── strobe.cpp      ← phase-delayed LED pulse generation
 ├── strobe.h
-└── web_ui.cpp      ← optional WiFi config interface
+└── web_ui.cpp      ← WiFi AP + HTTP control (primary UI)
     web_ui.h
 ```
 
@@ -40,17 +53,16 @@ src/
 ```cpp
 #define PIN_EM          5
 #define PIN_LED         18
-#define PIN_POT_FREQ    34   // ADC1 channel 6
-#define PIN_POT_PHASE   35   // ADC1 channel 7
 
 #define LEDC_CH_EM      0
 #define LEDC_RESOLUTION 14   // 14-bit: 0–16383 counts, good freq resolution
 
-#define FREQ_MIN_HZ     5.0f
+#define FREQ_MIN_HZ     60.0f   // floor kept above ~60 Hz flicker-fusion threshold
 #define FREQ_MAX_HZ     120.0f
-#define LED_PULSE_US    1500   // strobe flash duration — adjust for brightness/blur tradeoff
+#define FREQ_DEFAULT_HZ 80.0f   // Slow Dance operating point
+#define LED_PULSE_US    1500    // strobe flash duration — adjust for brightness/blur tradeoff
 
-#define ADC_SAMPLES     8      // oversample ADC to reduce noise
+#define EM_DUTY_DEFAULT_PCT 50  // EM on-time per cycle; lower = shorter, harder impulse (5–90%)
 ```
 
 ## em_drive.cpp
@@ -130,37 +142,21 @@ void setup() {
     Serial.begin(115200);
     em_init();
     strobe_init();
-    analogReadResolution(12);
-    analogSetAttenuation(ADC_11db);  // full 0–3.3V range
+    web_ui_init();    // starts WiFi AP + HTTP server
 }
 
 void loop() {
-    // Read and smooth potentiometers
-    float freq  = read_pot_freq();    // returns FREQ_MIN–FREQ_MAX
-    float phase = read_pot_phase();   // returns 0–360
-
-    em_set_freq(freq);
-    strobe_set_freq(freq);            // change to strobe_set_freq(freq * 0.99) for slow-mo
-    strobe_set_phase(phase);
-
-    // Optional: serial telemetry
-    Serial.printf("freq=%.1f Hz  phase=%.1f°\n", freq, phase);
-    delay(50);  // update rate: 20 Hz is plenty for pot reading
-}
-
-float read_pot_freq() {
-    uint32_t sum = 0;
-    for (int i = 0; i < ADC_SAMPLES; i++) sum += analogRead(PIN_POT_FREQ);
-    float val = sum / (float)ADC_SAMPLES;
-    return FREQ_MIN_HZ + (val / 4095.0f) * (FREQ_MAX_HZ - FREQ_MIN_HZ);
-}
-
-float read_pot_phase() {
-    uint32_t sum = 0;
-    for (int i = 0; i < ADC_SAMPLES; i++) sum += analogRead(PIN_POT_PHASE);
-    return (sum / (float)(ADC_SAMPLES * 4095)) * 360.0f;
+    handle_serial();  // single-char bench commands (s/m/e/w, +/-, [/])
+    web_ui_poll();    // service HTTP clients; web/serial commands call
+                      // em_set_freq / strobe_set_freq / strobe_set_phase directly
+    delay(50);        // 20 Hz housekeeping; the EM/strobe run off hardware timers
 }
 ```
+
+Frequency, phase, pulse width, and mode all arrive from the web UI (`/api/set`) or the
+serial command handler — there is no analog input to poll. The actual implementation
+consolidates `em_drive`/`strobe` into a single `drive.cpp` driven by one 10 kHz tick timer;
+the split shown above is the conceptual model.
 
 ## Sweep Mode (Resonance Finding)
 
@@ -175,8 +171,8 @@ void sweep_resonance() {
         Serial.printf("sweeping %.1f Hz\n", f);
         delay(100);
     }
-    // User watches for maximum feather amplitude
-    // Then rotates frequency pot to that value
+    // User watches for maximum feather amplitude,
+    // then sets that frequency from the web UI (or serial [/] nudge).
 }
 ```
 
@@ -200,7 +196,7 @@ No external libraries needed for the core functionality.
 LEDC is the ESP32's hardware PWM peripheral. It can generate precise square waves down
 to ~1 Hz without CPU involvement. There is one caveat: when you call `ledcWriteTone()`,
 there is a brief glitch in the output. This is fine because the glitch is infrequent
-(only when the pot moves) and lasts < 1 ms.
+(only when the frequency is changed from the web UI / serial) and lasts < 1 ms.
 
 The hardware timer for the strobe sync needs to match the LEDC frequency exactly to avoid
 phase drift. Update both atomically (disable interrupts briefly during the update) or accept

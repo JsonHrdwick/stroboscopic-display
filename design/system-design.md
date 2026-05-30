@@ -11,6 +11,9 @@ The only parameters that matter are:
 - `strobe_freq_hz` — usually equal to drive_freq, but offset slightly for slow-motion
 - `phase_deg` — where in the vibration cycle the "freeze" snapshot is taken
 - `led_pulse_us` — flash duration (shorter = sharper freeze, dimmer; longer = blurrier, brighter)
+- `em_duty_pct` — EM on-time per cycle (5–90%, default 50). Lower = shorter, harder impulse
+  kick to the reed; useful for building amplitude on a stiff 80 Hz reed and for running the
+  coil cooler. Adjustable from the web UI and serial (`<`/`>`).
 
 ## Signal Timing Diagram
 
@@ -32,8 +35,14 @@ Reed tip:    ╱╲  ╱╲  ╱╲   (sinusoidal, resonant)
 When strobe_freq == drive_freq and phase is constant, the LED always fires at the same
 point in the vibration cycle → frozen image.
 
-When strobe_freq is slightly lower (e.g., 29.9 Hz vs 30 Hz EM), the phase slips by
-0.1 Hz relative to the vibration → subject appears to move very slowly.
+When strobe_freq is slightly lower (e.g., 79.5 Hz vs 80 Hz EM), the phase slips by
+0.5 Hz relative to the vibration → subject appears to move very slowly (one loop every 2 s).
+
+**Both signals must run above the ~60 Hz flicker-fusion threshold** (the system operates at
+60–120 Hz, default 80 Hz). At 80 Hz the eye fuses the flashes into continuous light, so the
+frame looks steadily lit and the subject merely drifts in slow motion — the "always on"
+*Slow Dance* effect. The slow motion is the small drive-vs-strobe **offset**, not a low
+flash rate; run the strobe slower than ~60 Hz and it degrades into a visible blink.
 
 ## ESP32 Signal Generation
 
@@ -63,12 +72,11 @@ Two hardware timers (or two LEDC channels + one esp_timer for phase offset):
 |------|--------------------------------|-----------|
 | 5    | EM drive (LEDC CH0)            | OUTPUT    |
 | 18   | LED strobe (esp_timer pulse)   | OUTPUT    |
-| 34   | Frequency potentiometer (ADC)  | INPUT     |
-| 35   | Phase potentiometer (ADC)      | INPUT     |
 | 21   | SDA — optional OLED display    | I2C       |
 | 22   | SCL — optional OLED display    | I2C       |
 
-Using ADC1 (GPIO 32–39 only) for pots because ADC2 conflicts with WiFi.
+All control is via the web UI (WiFi AP + HTTP) with a serial-command fallback; there are no
+analog potentiometers. GPIO34/35 are unused and left unconnected.
 
 ## Resonance Detection (Auto-tune Mode)
 
@@ -77,9 +85,10 @@ or more simply, a small microphone/piezo on the base can detect the fundamental 
 amplitude. At resonance, vibration amplitude peaks sharply.
 
 A simpler approach: user holds a phone flashlight on the subject while sweeping frequency
-until the freeze effect sharpens. Mark that frequency on the encoder/dial.
+until the freeze effect sharpens. Note that frequency in the web UI.
 
-Even simpler for v1: just sweep manually with a pot and listen/watch.
+Even simpler for v1: trigger SWEEP mode (web UI or serial `w`) and watch for the frequency
+where tip amplitude peaks, then set that value in the web UI.
 
 ## Operating Modes
 

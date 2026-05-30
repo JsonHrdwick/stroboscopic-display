@@ -33,21 +33,44 @@ GPIO5 ──[100Ω]──┬── MOSFET Gate
 **Flyback diode is critical.** The electromagnet's inductance will spike to 50–100V when
 the MOSFET switches off if there is no flyback path. This destroys the MOSFET.
 
-Use **1N5819 Schottky** (faster than 1N4007, recovers in < 10 ns vs. 2 µs):
+Use a **1N4001** (or any standard rectifier / Schottky). Reverse-recovery speed is
+irrelevant at the 5–120 Hz switching frequency, so a slow rectifier works fine; a
+Schottky (e.g. 1N5819) is only preferred at much higher switching rates:
 ```
-12V ──[Cathode]──[1N5819]──[Anode]── MOSFET Drain (EM-)
+12V ──[Cathode]──[1N4001]──[Anode]── MOSFET Drain (EM-)
 ```
 
 ### EM Drive Frequency & Core Saturation
 
 Most 12V hobby electromagnets have an iron core. Iron saturates at ~1.5T, and at 50 Hz
-the core losses start increasing. Most cheap electromagnets can be driven at 5–120 Hz
+the core losses start increasing. Most cheap electromagnets can be driven at 60–120 Hz
 without visible heating, but watch the temperature — if the coil gets hot at your target
 frequency, reduce the duty cycle (e.g., 30% instead of 50%).
 
 The electromagnet fires **once per drive cycle** (pull on, release off). This means:
-- At 30 Hz drive: 30 pulls/second → reed tip vibrates at 30 Hz
-- The reed must be tuned so its resonant frequency matches the drive
+- At 80 Hz drive: 80 pulls/second → reed tip vibrates at 80 Hz
+- The reed must be tuned so its resonant frequency matches the drive (see mechanical-design.md)
+
+### Operate above flicker fusion (~75–90 Hz)
+
+This is the central design constraint, and it's why the operating band is set to **60–120 Hz
+(default 80 Hz)** rather than something slower. The LED strobes **once per vibration cycle**,
+so the flash rate equals the drive frequency. Below the ~60 Hz human flicker-fusion
+threshold the strobe is *visibly blinking* — it looks like a cheap disco strobe. At ~80 Hz
+the eye fuses the flashes into **continuous light**: the frame appears softly, steadily lit,
+and the subject just seems to move in slow motion. That "always on" quality is the whole
+effect.
+
+**The slow motion does not come from a low frequency.** It comes from the small offset
+between the strobe and the vibration:
+
+```
+vibration = 80.0 Hz,  strobe = 79.5 Hz  →  0.5 Hz beat  →  subject loops once every 2 s
+```
+
+Both run fast (above fusion); only their *difference* is slow. This mirrors Jeff Lieberman's
+*Slow Dance* frame, which vibrates at ~80 Hz and strobes at ~79–81 Hz.
+(Refs: livescience.com/55996, thisiscolossal.com/2016/08/slow-dance-picture-frame-illusion)
 
 ## LED Strobe Driver — Q2
 
@@ -89,21 +112,12 @@ The EM's **peak** current can hit 1–2A for the first few milliseconds on each 
 (before the inductance limits it). The 12V supply needs to handle this — most wall
 adapters can handle 2× rated current for brief spikes.
 
-## Optional: Analog Controls
+## Controls
 
-Two 10kΩ potentiometers provide hands-on control without needing a phone or computer.
-
-| Pot | GPIO | Controls         | Range       |
-|-----|------|------------------|-------------|
-| P1  | 34   | Drive frequency  | 5–120 Hz    |
-| P2  | 35   | Phase offset     | 0–360°      |
-
-ESP32 ADC is 12-bit (0–4095). Map:
-- P1: `freq = map(adc_val, 0, 4095, 5, 120)` Hz
-- P2: `phase = map(adc_val, 0, 4095, 0, 360)` degrees
-
-**Note:** ESP32 ADC has a nonlinear response at the top and bottom 10% of range. Apply a
-simple lookup-table correction or just accept the nonlinearity at extremes.
+All control is via the **web UI** (WiFi AP + HTTP) with a **serial command** fallback for
+bench use. The analog potentiometers from the original design were dropped — they're
+redundant with the web UI, and GPIO34/35 (input-only, no internal pull resistors) would
+float and feed noise into the drive if left unpopulated while still being read.
 
 ## Bill of Materials
 
@@ -112,12 +126,12 @@ simple lookup-table correction or just accept the nonlinearity at extremes.
 | 1   | ESP32 DevKitC                 | ~$5         | Already have                   |
 | 1   | 12V Electromagnet             | —           | Already have                   |
 | 2   | IRLZ44N MOSFET (TO-220)       | $0.50 ea    | One for EM, one for LED        |
-| 2   | 1N5819 Schottky diode         | $0.15 ea    | Flyback on EM, protection      |
+| 1   | 1N4001 rectifier diode        | $0.10 ea    | Flyback on EM coil             |
 | 2   | 100Ω resistor ¼W              | <$0.05 ea   | Gate series                    |
 | 2   | 10kΩ resistor ¼W              | <$0.05 ea   | Gate pull-downs                |
-| 2   | 10kΩ pot                      | $0.50 ea    | Frequency and phase knobs      |
-| 2   | 100µF 25V electrolytic        | $0.25 ea    | 12V rail decoupling            |
-| 4   | 100nF ceramic cap             | $0.10 ea    | HF decoupling                  |
+| 2   | 470µF 50V electrolytic        | $0.30 ea    | 12V rail bulk decoupling       |
+| 3   | 100nF ceramic cap             | $0.10 ea    | HF decoupling (Q1, Q2, VIN)    |
+| 1   | 10µF electrolytic             | $0.15 ea    | ESP32 VIN decoupling           |
 | 1   | 12V 10W COB LED module        | $3–5        | Strobe light source            |
 | 1   | MP1584 buck module (12V→5V)   | $1–2        | Powers ESP32                   |
 | 1   | 12V 2A power supply           | $5–10       | Wall adapter                   |

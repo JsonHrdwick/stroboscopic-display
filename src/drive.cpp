@@ -28,6 +28,7 @@ static volatile uint8_t  s_led_pulse_ticks     = LED_PULSE_TICKS_DEFAULT;
 static float      s_freq_hz     = FREQ_DEFAULT_HZ;
 static float      s_phase_deg   = PHASE_DEFAULT_DEG;
 static float      s_delta_hz    = SLOW_MO_DELTA_DEFAULT_HZ;
+static uint8_t    s_em_duty_pct = EM_DUTY_DEFAULT_PCT;
 static DriveMode  s_mode        = DriveMode::SYNC;
 
 static hw_timer_t* s_timer = nullptr;
@@ -41,7 +42,11 @@ static const unsigned long SWEEP_STEP_MS = 200;  // step every 200 ms → full s
 // ── Helper: recompute ISR params from app state ───────────────────────────────
 static void update_isr_params() {
     uint32_t pt     = (uint32_t)(TICK_HZ / s_freq_hz);
-    uint32_t em_off = pt / 2;
+    // EM on-time = duty% of the period, clamped to [1, pt-1] so the coil always gets a
+    // definite on and off edge each cycle (em_off == pt would leave it stuck HIGH).
+    uint32_t em_off = (uint32_t)((uint64_t)pt * s_em_duty_pct / 100);
+    if (em_off < 1)   em_off = 1;
+    if (em_off >= pt) em_off = pt - 1;
     uint32_t led_on = (uint32_t)(s_phase_deg / 360.0f * (float)pt);
     uint32_t led_off = (led_on + s_led_pulse_ticks) % pt;
     if (led_off == led_on) led_off = (led_on + 1) % pt;  // guarantee at least 1 tick on
@@ -115,7 +120,7 @@ void drive_init() {
     // Hardware timer: prescaler 8 on 80 MHz APB → 10 MHz tick clock
     // Alarm every (10 MHz / TICK_HZ) = 1000 ticks → fires at 10 kHz
     s_timer = timerBegin(0, 8, true);
-    timerAttachInterrupt(s_timer, &drive_isr, true);
+    timerAttachInterrupt(s_timer, &drive_isr, false);
     timerAlarmWrite(s_timer, 10000000UL / TICK_HZ, true);
     timerAlarmEnable(s_timer);
 }
@@ -138,6 +143,11 @@ void drive_set_led_pulse(uint8_t ticks) {
 
 void drive_set_slow_mo_delta(float hz) {
     s_delta_hz = constrain(hz, 0.05f, 5.0f);
+    update_isr_params();
+}
+
+void drive_set_em_duty(uint8_t pct) {
+    s_em_duty_pct = constrain(pct, (uint8_t)EM_DUTY_MIN_PCT, (uint8_t)EM_DUTY_MAX_PCT);
     update_isr_params();
 }
 
@@ -181,4 +191,5 @@ void drive_sweep_update(unsigned long now_ms) {
 float     drive_get_freq()      { return s_freq_hz; }
 float     drive_get_phase()     { return s_phase_deg; }
 uint8_t   drive_get_led_pulse() { return s_led_pulse_ticks; }
+uint8_t   drive_get_em_duty()   { return s_em_duty_pct; }
 DriveMode drive_get_mode()      { return s_mode; }
